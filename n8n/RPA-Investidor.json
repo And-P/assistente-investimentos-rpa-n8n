@@ -1,0 +1,191 @@
+{
+  "name": "RPA-Investidor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clientes",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "239226ec-723a-44ad-b46b-e29945d712a7",
+      "name": "Clientes POST",
+      "webhookId": "de53fbb9-3bc1-4003-81b4-25c20be0b19a"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Recupera os dados dos clientes do Webhook\nconst webhookItems = $(\"Clientes POST\").all();\n\nconst clientes = webhookItems.flatMap(item => {\n  const dados = item.json.body ?? item.json;\n\n  return Array.isArray(dados) ? dados : [dados];\n}).filter(cliente => cliente.nome && cliente.perfil);\n\n// 2. Recupera o CSV retornado pelo HTTP Request\nconst httpItems = $(\"Perfil de Investimentos\").all();\n\nconst resposta = httpItems[0]?.json;\n\nif (!resposta) {\n  throw new Error(\"Nenhum dado recebido do node HTTP Request.\");\n}\n\n// O HTTP Request pode retornar o CSV em data, body\n// ou diretamente como texto, dependendo da configuração.\nlet csv = typeof resposta === \"string\"\n  ? resposta\n  : resposta.data ?? resposta.body ?? resposta;\n\nlet investimentos;\n\n// Caso o HTTP Request já retorne objetos estruturados\nif (Array.isArray(csv)) {\n  investimentos = csv;\n} else if (typeof csv === \"string\") {\n  // 3. Converte CSV em objetos JavaScript\n  function separarCSV(linha) {\n    return linha.match(/(\"(?:[^\"]|\"\")*\"|[^,]*)(,|$)/g)\n      ?.filter((campo, indice, arr) => indice < arr.length)\n      .map(campo => {\n        campo = campo.replace(/,$/, \"\");\n\n        if (campo.startsWith('\"') && campo.endsWith('\"')) {\n          campo = campo.slice(1, -1).replace(/\"\"/g, '\"');\n        }\n\n        return campo.trim();\n      }) ?? [];\n  }\n\n  const linhas = csv.trim().split(/\\r?\\n/);\n\n  const cabecalhos = separarCSV(linhas.shift())\n    .map(campo => campo.replace(/^﻿/, \"\"));\n\n  investimentos = linhas\n    .filter(linha => linha.trim() !== \"\")\n    .map(linha => {\n      const valores = separarCSV(linha);\n\n      return Object.fromEntries(\n        cabecalhos.map((cabecalho, indice) => [\n          cabecalho,\n          valores[indice] ?? \"\"\n        ])\n      );\n    });\n} else {\n  throw new Error(\n    \"O retorno do HTTP Request não contém um CSV ou uma lista de investimentos válida.\"\n  );\n}\n\n// 4. Converte o saldo brasileiro para número\nfunction converterSaldo(saldo) {\n  if (typeof saldo === \"number\") return saldo;\n\n  const valor = String(saldo ?? \"\")\n    .replace(/R\\$\\s?/g, \"\")\n    .replace(/\\./g, \"\")\n    .replace(\",\", \".\")\n    .trim();\n\n  const numero = Number(valor);\n\n  if (!Number.isFinite(numero)) {\n    throw new Error(`Saldo inválido: ${saldo}`);\n  }\n\n  return numero;\n}\n\n// 5. Cruza perfil do cliente, saldo e investimento mínimo\nreturn clientes.map(cliente => {\n  const saldo = converterSaldo(cliente.saldo);\n\n  const investimentosCompativeis = investimentos\n    .filter(investimento => {\n      const perfilCompativel =\n        String(investimento.perfil).trim().toLowerCase() ===\n        String(cliente.perfil).trim().toLowerCase();\n\n      const minimo = Number(investimento.minimo);\n\n      return (\n        perfilCompativel &&\n        Number.isFinite(minimo) &&\n        saldo >= minimo\n      );\n    })\n    .map(investimento => ({\n      produto: investimento.produto,\n      minimo: Number(investimento.minimo),\n      rentabilidade: investimento.rentabilidade\n    }));\n\n  return {\n    json: {\n      nome: cliente.nome,\n      email: cliente.email,\n      saldo: cliente.saldo,\n      saldoNumerico: saldo,\n      perfil: cliente.perfil,\n      investimentosCompativeis\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "eb0a2755-5f8f-4a10-96aa-0c1a7a040031",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/And-P/assistente-investimentos-rpa-n8n/refs/heads/main/docs/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        208,
+        0
+      ],
+      "id": "c4115487-e842-4dd5-b2a3-cf3a63b1cb48",
+      "name": "Perfil de Investimentos"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d0d3598a-ec98-4c9c-9ed6-407b86471b89",
+              "name": "nome",
+              "value": "={{ $json.nome }}",
+              "type": "string"
+            },
+            {
+              "id": "0a1cfacb-6cc5-432b-982a-d5cbce83a02f",
+              "name": "email",
+              "value": "={{ $json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "5e8a4123-e358-4b7a-8b48-b2d4a152ad64",
+              "name": "perfil",
+              "value": "={{ $json.perfil }}",
+              "type": "string"
+            },
+            {
+              "id": "1ac5a94e-f161-4afa-b62a-61e638e21dfa",
+              "name": "investimentosCompativeis",
+              "value": "={{ $json.investimentosCompativeis }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        640,
+        0
+      ],
+      "id": "882709cf-3f29-467d-8732-f94e19606cd0",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst clientes = $input.all();\n\nreturn clientes.map(item => {\n  const {\n    nome,\n    email,\n    perfil,\n    investimentosCompativeis\n  } = item.json;\n\n  const investimentos = Array.isArray(investimentosCompativeis)\n    ? investimentosCompativeis\n    : [];\n\n  // Monta a lista de investimentos compatíveis\n  const listaInvestimentos = investimentos.length > 0\n    ? investimentos.map(inv => {\n        const minimo = Number(inv.minimo).toLocaleString(\"pt-BR\", {\n          style: \"currency\",\n          currency: \"BRL\"\n        });\n\n        return `• ${inv.produto} — investimento inicial: ${minimo} — rentabilidade informada: ${inv.rentabilidade}`;\n      }).join(\"\\n\")\n    : \"No momento, não encontramos opções que atendam aos critérios de perfil e saldo disponíveis.\";\n\n  // Assunto do e-mail\n  const assunto = `Sugestões de investimento para você, ${nome}`;\n\n  // Corpo personalizado do e-mail\n  const mensagem = `Olá, ${nome}! Tudo bem?\n\nPreparamos algumas opções de investimento considerando seu perfil ${perfil} e o saldo disponível informado.\n\nConfira as opções compatíveis com esses critérios:\n\n${listaInvestimentos}\n\nNossa sugestão é que você avalie cada alternativa considerando seus objetivos financeiros, prazo de investimento, liquidez e tolerância a riscos. Rentabilidades informadas não garantem resultados futuros.\n\nSe tiver dúvidas, estamos à disposição para ajudar!\n\nUm abraço,\nEquipe de Investimentos`;\n\n  return {\n    json: {\n      nome,\n      email,\n      perfil,\n      assunto,\n      mensagem\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        0
+      ],
+      "id": "1272b681-6e5c-4e48-881f-d43694a41b0d",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.assunto }}",
+        "message": "={{ $json.mensagem }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1072,
+        0
+      ],
+      "id": "ff5e803a-fedb-40f3-87ce-cc543c90dd4e",
+      "name": "Send a message",
+      "webhookId": "a1cd7ce7-9b9c-4cdd-9866-dad1ce52bfd8",
+      "disabled": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Clientes POST": {
+      "main": [
+        [
+          {
+            "node": "Perfil de Investimentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perfil de Investimentos": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "4a4d240c-2797-4ced-9913-1cc9db5541f7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7617cfae254340c117041e8fe035adc9b58a911d4d35f4d12d345c3c02f2e243"
+  },
+  "nodeGroups": [],
+  "id": "HZruDVfAryp9skNP",
+  "tags": []
+}
